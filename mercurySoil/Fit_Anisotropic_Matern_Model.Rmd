@@ -1,0 +1,63 @@
+
+```{r Script} 
+### Load libraries 
+library(cmdstanr)
+
+### Load data
+load(file = "Data/covariates.RData" ) # covariates 
+load(file = "Data/hgm.RData" ) # response
+
+# covariates <- list( "elevation" = covariates$elevation,
+#                      "evi" = covariates$evi,
+#                      "night" = covariates$night )
+# covariates$night@file@name <- "Data/night.grd"
+# save(covariates, file = "Data/covariates.RData")
+
+elev <- raster::extract( covariates$elevation, hgm )
+evi <- raster::extract( covariates$evi, hgm )
+night <- raster::extract( covariates$night, hgm )
+
+y_obs <- hgm@data$HG
+
+### Remove rows with at least one column of missing values 
+data_Stan <- data.frame( elev, evi, night, y_obs )
+rows_with_missing_values <- sort( unique( which(is.na(data_Stan), arr.ind=TRUE)[,1] ) )
+data_Stan <- data_Stan[-rows_with_missing_values,]
+### Leaves 812 observations (from 829) with elev, evi, night
+
+### Construct regression matrix 
+X_cont <- cbind( data_Stan$elev/1000, data_Stan$evi, data_Stan$night/1000 )
+X_obs <- cbind( rep(1,dim(X_cont)[1]), X_cont )
+
+### Prepare data for Stan 
+data_soil <- list( N = dim(X_obs)[1],
+              K = dim(X_obs)[2],
+              y_obs = data_Stan$y_obs, 
+              coords = hgm@coords[-rows_with_missing_values,]/1000, 
+              X = X_obs, 
+              sigma = sqrt(2.0),
+              lambda_S = 1/2,
+              lambda_Y = 500 ) 
+
+mercurySoil_model <- cmdstanr::cmdstan_model( stan_file = "Anisotropic_Matern_Model_MercurySoil.stan",
+                                              compile = TRUE, force_recompile = TRUE )
+# mercurySoil_model
+
+mercurySoil_samples <- mercurySoil_model$sample( data = data_soil, refresh = 10,
+                                                 chains = 4, parallel_chains = 4,
+                                                 iter_warmup = 500, iter_sampling = 500,
+                                                 output_dir = "Results", 
+                                                 adapt_delta = 0.90, max_treedepth = 16,
+                                                 init = list( list( Beta = c(0,0,0,0), shape = 0.5,
+                                                                    phi_1 = 1, phi_2 = 200,
+                                                                    phi_3 = 1, phi_4 = 0 ),
+                                                              list( Beta = c(-1,0.25,0.5,0), shape = 0.55,
+                                                                    phi_1 = 0.8, phi_2 = 225,
+                                                                    phi_3 = 1.2, phi_4 = 0.2 ),
+                                                              list( Beta = c(1,0.5,0.1,-0.1), shape = 0.45,
+                                                                    phi_1 = 1.2, phi_2 = 175,
+                                                                    phi_3 = 1.5, phi_4 = -0.33 ),
+                                                              list( Beta = c(-1,0.25,0.5,0), shape = 0.525,
+                                                                    phi_1 = 1.33, phi_2 = 200,
+                                                                    phi_3 = 0.8, phi_4 = 0.4 ) ) )
+```
